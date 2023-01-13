@@ -8,7 +8,7 @@ import numba
 import h5py
 from ctypes import *
 import os
-
+from tqdm import tqdm
 script_dir = os.path.abspath(os.path.dirname(__file__))
 lib_path = os.path.join(script_dir, "keplerPy.so")
 
@@ -95,10 +95,11 @@ def concatenate_res(res_data,nsample):
 
 def get_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-n','--nsample',dest='nsample',action='store',default=100)
+    parser.add_argument('-b','--batchsize',dest='batchsize',action='store',default=100)
+    parser.add_argument('-n','--nbatch',dest='nbatch',action='store',default=10000)
     parser.add_argument('-v','--vasym',dest='v_asym',action='store',default=1.0)
     args = parser.parse_args()
-    return int(args.nsample), float(args.v_asym)
+    return int(args.batchsize), int(args.nbatch), float(args.v_asym)
 
 def generate_em_posvel(nsample):
     sim = rebound.Simulation()
@@ -326,9 +327,13 @@ def run_forward_kepler(xe,xm,xc,vxe,vxm,vxc,t_end):
     #t_end = 2*orbit.T
     libkepler.integrate(xs_c,xe_c,xm_c,xc_c,vxs_c,vxe_c,vxm_c,vxc_c,c_double(t_end),byref(collb_flag))
 
-    if(collb_flag.value == 4):
+
+    #pack the data properly and return it
+
+
+    #if(collb_flag.value == 4):
         #print("aye!")
-        isunbound = False
+    #    isunbound = False
 
     #DEBUG START
     #if(collb_flag.value == 4):
@@ -354,6 +359,7 @@ def run_forward_kepler(xe,xm,xc,vxe,vxm,vxc,t_end):
     #    orbit = sim.particles[3].calculate_orbit(primary=sim.particles[0])
     #    print(orbit.a)
     #    print('-------------------')
+    #DEBUG END
 
     xsi = np.array([xs_c[0],xs_c[1],xs_c[2]])
     xei = np.array([xe_c[0],xe_c[1],xe_c[2]])
@@ -365,6 +371,7 @@ def run_forward_kepler(xe,xm,xc,vxe,vxm,vxc,t_end):
     vmi = np.array([vxm_c[0],vxm_c[1],vxm_c[2]])
     vpi = np.array([vxc_c[0],vxc_c[1],vxc_c[2]])
 
+    return (xsi,xei,xmi,xpi,vsi,vei,vmi,vpi,collb_flag.value)
     #return (isunbound,xsi,xei,xmi,xpi,vsi,vei,vmi,vpi)
 
 
@@ -512,6 +519,7 @@ def run_scattering_experiment(args):
     orbit = sim.particles[1].calculate_orbit(primary=sim.particles[0])
     t_end = orbit.T+10 #buffer
     del sim.particles
+    res_batch = []
     for i in range(0,BATCHSIZE):
         xxb = [xb[i],yb[i],zb[i]]
         vvxb = [vxb[i],vyb[i],vzb[i]]
@@ -523,67 +531,188 @@ def run_scattering_experiment(args):
         sim.add(m=0.0,x=cp[0],y=cp[1],z=cp[2],vx=cp[3],vy=cp[4],vz=cp[5])
         sim.move_to_com()
         orbit = sim.particles[1].calculate_orbit(primary=sim.particles[0])
+        qi = (orbit.a*(1-orbit.e))
         t_end_s = 2*orbit.T
         del sim.particles
         xc = [cp[0],cp[1],cp[2]]
         vxc = [cp[3],cp[4],cp[5]]
 
-        run_forward_kepler(xe[i],xm[i],xc,vxe[i],vxm[i],vxc,t_end_s)
+        res_s = run_forward_kepler(xe[i],xm[i],xc,vxe[i],vxm[i],vxc,t_end_s)
+        if(res_s[-1]>0):
+            #xs,xe,xm,xc,vxs,vxe,vxm,vxc,initial_b,initial_rp,collb_flag
+            res_batch.append([res_s[0],res_s[1],res_s[2],res_s[3],res_s[4],res_s[5],res_s[6],res_s[7],b[i],qi,res_s[-1]])
 
+    return res_batch
     #print((np.array(rp_debug)-np.array(rp_debug2))/np.array(rp_debug))
     #print(rp_debug)
     #print(np.max((np.array(rp_debug)-rp)/rp))
 if __name__ == "__main__":
-    BATCHSIZE = 1000
-    v_a = 1.0
-    args = (v_a,BATCHSIZE)
-    args_rep = ((args, ) * 2000)
+    #BATCHSIZE = 1000
+    #v_a = 1.0
+    #args = (v_a,BATCHSIZE)
+    #NBATCHES = 2000
+    BATCHSIZE,NBATCHES,v_a = get_arguments()
+    args = (v_a, BATCHSIZE)
+    args_rep = ((args, ) * NBATCHES)
     #run_scattering_experiment(args)
 #     nsample, v_a = get_arguments()
     start_time = time.time()
     res_data = []
+    count = 0
+    count_capbound = 0
+
+    print("RAPTOR v1.0. Made by Diptajyoti Mukherjee. Jan 13, 2023",flush=True)
+    print("System: Sun-Earth-Moon",flush=True)
+    print("BATCHSIZE: ",BATCHSIZE,flush=True)
+    print("NBATCHES: ", NBATCHES,flush=True)
+    print("Total experiments: ", BATCHSIZE*NBATCHES,flush=True)
+    print("V_asym (km/s): ", v_a,flush=True)
+
+    sim = rebound.Simulation()
+    sim.units = ('yr', 'AU', 'Msun')
+
+    me = 5.9724e24 * u.kg
+    me = me.to(u.Msun).value
+    mm = 7.34767309e22 * u.kg
+    mm = mm.to(u.Msun).value
+
+    v_asym = v_a #km/s
+    v_asym_kms = v_asym * (u.km/u.s)#km/s
+    #print(v_asym_kms)
+    v_asym_auyr = v_asym_kms.to(u.AU/u.yr).value
+    upper_b = np.sqrt(1 + 2 * sim.G*(me+mm+1)/(v_asym_auyr**2))
+    print("Max b (AU): {:21.16f}".format(upper_b),flush=True)
+    #print("generated earth, moon pos")
+    sim = None
+
+    UP = "\x1B[3A"
+    CLR = "\x1B[0K"
+    print("\n\n")
+
+    #for saving the data
+    xs = []
+    ys = []
+    zs = []
+    vxs = []
+    vys = []
+    vzs = []
+
+    xe = []
+    ye = []
+    ze = []
+    vxe = []
+    vye = []
+    vze = []
+
+    xm = []
+    ym = []
+    zm = []
+    vxm = []
+    vym = []
+    vzm = []
+
+    xc = []
+    yc = []
+    zc = []
+    vxc = []
+    vyc = []
+    vzc = []
+
+    q = []
+    b = []
+    collb_flag = []
     with multiprocessing.Pool() as pool:
-        for result in pool.imap(run_scattering_experiment, args_rep):
-            pass
+        for results in pool.imap(run_scattering_experiment, args_rep):
+            if(len(results)>0):
+                count_capbound += len(results)
+                for result in results:
+                    xs.append(result[0][0])
+                    ys.append(result[0][1])
+                    zs.append(result[0][2])
+
+                    xe.append(result[1][0])
+                    ye.append(result[1][1])
+                    ze.append(result[1][2])
+
+                    xm.append(result[2][0])
+                    ym.append(result[2][1])
+                    zm.append(result[2][2])
+
+                    xc.append(result[3][0])
+                    yc.append(result[3][1])
+                    zc.append(result[3][2])
+
+                    vxs.append(result[4][0])
+                    vys.append(result[4][1])
+                    vzs.append(result[4][2])
+
+                    vxe.append(result[5][0])
+                    vye.append(result[5][1])
+                    vze.append(result[5][2])
+
+                    vxm.append(result[6][0])
+                    vym.append(result[6][1])
+                    vzm.append(result[6][2])
+
+                    vxc.append(result[7][0])
+                    vyc.append(result[7][1])
+                    vzc.append(result[7][2])
+
+                    b.append(result[8])
+                    q.append(result[9])
+                    collb_flag.append(result[10])
+            processed_percent = count/NBATCHES * 100
+            print(f"{UP}processed batch: {processed_percent}%{CLR}\ncaptured/bound: {count_capbound}{CLR}\n",flush=True)
+            count+=1
             #for result in pool.imap(generate_em_posvel, range(0,nsample)):
             #res_data.append(result)
 
 #     xe,ye,ze,vxe,vye,vze,xm,ym,zm,vxm,vym,vzm = concatenate_res(res_data,nsample)
 #     #print(xe)
 
-#     print("generated earth, moon pos")
-    print(time.time()-start_time)
+    print("total time taken: ",time.time()-start_time)
 #     upper_b, b, xyz,vel = generate_all_components(nsample,v_a,xe,ye,ze,vxe,vye,vze,xm,ym,zm,vxm,vym,vzm)
 #     print("time taken to generate: ",time.time()-start_time)
-#     print("writing to file...")
+    print("writing to file...")
 
-#     hf = h5py.File('scattering_data.h5', 'w')
-#     hf.create_dataset('xe',data=xe)
-#     hf.create_dataset('ye',data=ye)
-#     hf.create_dataset('ze',data=ze)
-#     hf.create_dataset('xm',data=xm)
-#     hf.create_dataset('ym',data=ym)
-#     hf.create_dataset('zm',data=zm)
+    hf = h5py.File('captured_bound_data.h5', 'w')
+    hf.create_dataset('xs',data=xs)
+    hf.create_dataset('ys',data=ys)
+    hf.create_dataset('zs',data=zs)
+    hf.create_dataset('vxs',data=vxs)
+    hf.create_dataset('vys',data=vys)
+    hf.create_dataset('vzs',data=vzs)
 
-#     hf.create_dataset('vxe',data=vxe)
-#     hf.create_dataset('vye',data=vye)
-#     hf.create_dataset('vze',data=vze)
-#     hf.create_dataset('vxm',data=vxm)
-#     hf.create_dataset('vym',data=vym)
-#     hf.create_dataset('vzm',data=vzm)
 
-#     hf.create_dataset('xc',data=xyz[:,0])
-#     hf.create_dataset('yc',data=xyz[:,1])
-#     hf.create_dataset('zc',data=xyz[:,2])
-#     hf.create_dataset('vxc',data=vel[:,0])
-#     hf.create_dataset('vyc',data=vel[:,1])
-#     hf.create_dataset('vzc',data=vel[:,2])
-#     hf.create_dataset('b',data=b)
+    hf.create_dataset('xe',data=xe)
+    hf.create_dataset('ye',data=ye)
+    hf.create_dataset('ze',data=ze)
+    hf.create_dataset('xm',data=xm)
+    hf.create_dataset('ym',data=ym)
+    hf.create_dataset('zm',data=zm)
 
-#     info_dset = hf.create_dataset("info",dtype="f8")
-#     info_dset.attrs.create("v_asym",data=v_a)
-#     info_dset.attrs.create("upper_b",data=upper_b)
+    hf.create_dataset('vxe',data=vxe)
+    hf.create_dataset('vye',data=vye)
+    hf.create_dataset('vze',data=vze)
+    hf.create_dataset('vxm',data=vxm)
+    hf.create_dataset('vym',data=vym)
+    hf.create_dataset('vzm',data=vzm)
 
-#     hf.close()
+    hf.create_dataset('xc',data=xc)
+    hf.create_dataset('yc',data=yc)
+    hf.create_dataset('zc',data=zc)
+    hf.create_dataset('vxc',data=vxc)
+    hf.create_dataset('vyc',data=vyc)
+    hf.create_dataset('vzc',data=vzc)
 
-#     print("writing file completed")
+    hf.create_dataset('b',data=b)
+    hf.create_dataset('q',data=q)
+    hf.create_dataset('collb_flag',data=collb_flag)
+
+    info_dset = hf.create_dataset("info",dtype="f8")
+    info_dset.attrs.create("v_asym",data=v_a)
+    info_dset.attrs.create("upper_b",data=upper_b)
+    info_dset.attrs.create("total_experiments",data=float(NBATCHES*BATCHSIZE))
+    hf.close()
+
+    print("writing file completed")
