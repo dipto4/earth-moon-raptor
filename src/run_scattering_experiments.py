@@ -8,7 +8,16 @@ import numba
 import h5py
 from ctypes import *
 import os
-from tqdm import tqdm
+#from tqdm import tqdm
+#from joblib import Parallel, delayed
+#from parallelbar import progress_imap
+#multiprocessing.set_start_method("spawn")
+import threading
+from functools import wraps
+import signal
+
+
+
 script_dir = os.path.abspath(os.path.dirname(__file__))
 lib_path = os.path.join(script_dir, "keplerPy.so")
 
@@ -26,6 +35,30 @@ libtwobody.integrate2body.argtypes = [POINTER(c_double), POINTER(c_double), POIN
 
 
 
+def stop_function():
+    os.kill(os.getpid(), signal.SIGINT)
+
+
+def stopit_after_timeout(s, raise_exception=True):
+    def actual_decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            timer = threading.Timer(s, stop_function)
+            try:
+                timer.start()
+                result = func(*args, **kwargs)
+            except KeyboardInterrupt:
+                msg = f'function {func.__name__} took longer than {s} s.'
+                if raise_exception:
+                    raise TimeoutError(msg)
+                result = msg
+            finally:
+                timer.cancel()
+            return result
+
+        return wrapper
+
+    return actual_decorator
 
 
 def concatenate_res2(res_data,nsample):
@@ -375,7 +408,7 @@ def run_forward_kepler(xe,xm,xc,vxe,vxm,vxc,t_end):
     #return (isunbound,xsi,xei,xmi,xpi,vsi,vei,vmi,vpi)
 
 
-
+@stopit_after_timeout(10, raise_exception=True)
 def run_scattering_experiment(args):
     #set BATCHSIZE to be 100
     #generate BATCHSIZE random earth-moon posvels first
@@ -532,6 +565,7 @@ def run_scattering_experiment(args):
         sim.move_to_com()
         orbit = sim.particles[1].calculate_orbit(primary=sim.particles[0])
         qi = (orbit.a*(1-orbit.e))
+        #rp_debug.append(qi)
         t_end_s = 2*orbit.T
         del sim.particles
         xc = [cp[0],cp[1],cp[2]]
@@ -541,12 +575,13 @@ def run_scattering_experiment(args):
         if(res_s[-1]>0):
             #xs,xe,xm,xc,vxs,vxe,vxm,vxc,initial_b,initial_rp,collb_flag
             res_batch.append([res_s[0],res_s[1],res_s[2],res_s[3],res_s[4],res_s[5],res_s[6],res_s[7],b[i],qi,res_s[-1]])
-
+    #print("finished batch!")
+    #print(((np.array(rp_debug)-rp)/rp))
     return res_batch
     #print((np.array(rp_debug)-np.array(rp_debug2))/np.array(rp_debug))
     #print(rp_debug)
-    #print(np.max((np.array(rp_debug)-rp)/rp))
 if __name__ == "__main__":
+    #multiprocessing.set_start_method('forkserver')
     #BATCHSIZE = 1000
     #v_a = 1.0
     #args = (v_a,BATCHSIZE)
@@ -621,55 +656,115 @@ if __name__ == "__main__":
     q = []
     b = []
     collb_flag = []
+    rrr=[]
+    rrre=[]
     with multiprocessing.Pool() as pool:
-        for results in pool.imap(run_scattering_experiment, args_rep):
-            if(len(results)>0):
+        iterator = pool.imap_unordered(run_scattering_experiment, args_rep)
+        while True:
+            try:
+                count+=1
+                results = iterator.next()
                 count_capbound += len(results)
-                for result in results:
-                    xs.append(result[0][0])
-                    ys.append(result[0][1])
-                    zs.append(result[0][2])
+                processed_percent = count/NBATCHES * 100
+                print(f"{UP}processed batch: {processed_percent}%{CLR}\ncaptured/bound: {count_capbound}{CLR}\n",flush=True)
 
-                    xe.append(result[1][0])
-                    ye.append(result[1][1])
-                    ze.append(result[1][2])
+                if(len(results)>0):
+                    for result in results:
+                        xs.append(result[0][0])
+                        ys.append(result[0][1])
+                        zs.append(result[0][2])
 
-                    xm.append(result[2][0])
-                    ym.append(result[2][1])
-                    zm.append(result[2][2])
+                        xe.append(result[1][0])
+                        ye.append(result[1][1])
+                        ze.append(result[1][2])
 
-                    xc.append(result[3][0])
-                    yc.append(result[3][1])
-                    zc.append(result[3][2])
+                        xm.append(result[2][0])
+                        ym.append(result[2][1])
+                        zm.append(result[2][2])
 
-                    vxs.append(result[4][0])
-                    vys.append(result[4][1])
-                    vzs.append(result[4][2])
+                        xc.append(result[3][0])
+                        yc.append(result[3][1])
+                        zc.append(result[3][2])
 
-                    vxe.append(result[5][0])
-                    vye.append(result[5][1])
-                    vze.append(result[5][2])
+                        vxs.append(result[4][0])
+                        vys.append(result[4][1])
+                        vzs.append(result[4][2])
 
-                    vxm.append(result[6][0])
-                    vym.append(result[6][1])
-                    vzm.append(result[6][2])
+                        vxe.append(result[5][0])
+                        vye.append(result[5][1])
+                        vze.append(result[5][2])
 
-                    vxc.append(result[7][0])
-                    vyc.append(result[7][1])
-                    vzc.append(result[7][2])
+                        vxm.append(result[6][0])
+                        vym.append(result[6][1])
+                        vzm.append(result[6][2])
 
-                    b.append(result[8])
-                    q.append(result[9])
-                    collb_flag.append(result[10])
-            processed_percent = count/NBATCHES * 100
-            print(f"{UP}processed batch: {processed_percent}%{CLR}\ncaptured/bound: {count_capbound}{CLR}\n",flush=True)
-            count+=1
+                        vxc.append(result[7][0])
+                        vyc.append(result[7][1])
+                        vzc.append(result[7][2])
+
+                        b.append(result[8])
+                        q.append(result[9])
+                        collb_flag.append(result[10])
+
+                #print(len(result))
+                #rrr.append(result)
+
+            except StopIteration:
+                break
+            except Exception as e:
+                # do something
+                rrre.append(e)
+        pool.terminate()
+        #for results in pool.imap_unordered(run_scattering_experiment, args_rep):
+            #if(len(results)>0):
+                #count_capbound += len(results)
+                #for result in results:
+#                     xs.append(result[0][0])
+#                     ys.append(result[0][1])
+#                     zs.append(result[0][2])
+
+#                     xe.append(result[1][0])
+#                     ye.append(result[1][1])
+#                     ze.append(result[1][2])
+
+#                     xm.append(result[2][0])
+#                     ym.append(result[2][1])
+#                     zm.append(result[2][2])
+
+#                     xc.append(result[3][0])
+#                     yc.append(result[3][1])
+#                     zc.append(result[3][2])
+
+#                     vxs.append(result[4][0])
+#                     vys.append(result[4][1])
+#                     vzs.append(result[4][2])
+
+#                     vxe.append(result[5][0])
+#                     vye.append(result[5][1])
+#                     vze.append(result[5][2])
+
+#                     vxm.append(result[6][0])
+#                     vym.append(result[6][1])
+#                     vzm.append(result[6][2])
+
+#                     vxc.append(result[7][0])
+#                     vyc.append(result[7][1])
+#                     vzc.append(result[7][2])
+
+#                     b.append(result[8])
+#                     q.append(result[9])
+#                     collb_flag.append(result[10])
+            #processed_percent = count/NBATCHES * 100
+            #print(f"{UP}processed batch: {processed_percent}%{CLR}\ncaptured/bound: {count_capbound}{CLR}\n",flush=True)
+            #count+=1
             #for result in pool.imap(generate_em_posvel, range(0,nsample)):
             #res_data.append(result)
-
+        #pool.terminate()
 #     xe,ye,ze,vxe,vye,vze,xm,ym,zm,vxm,vym,vzm = concatenate_res(res_data,nsample)
 #     #print(xe)
-
+    print(count_capbound)
+    print("\n\n")
+    print(rrre)
     print("total time taken: ",time.time()-start_time)
 #     upper_b, b, xyz,vel = generate_all_components(nsample,v_a,xe,ye,ze,vxe,vye,vze,xm,ym,zm,vxm,vym,vzm)
 #     print("time taken to generate: ",time.time()-start_time)
@@ -712,7 +807,7 @@ if __name__ == "__main__":
     info_dset = hf.create_dataset("info",dtype="f8")
     info_dset.attrs.create("v_asym",data=v_a)
     info_dset.attrs.create("upper_b",data=upper_b)
-    info_dset.attrs.create("total_experiments",data=float(NBATCHES*BATCHSIZE))
+    info_dset.attrs.create("total_experiments",data=float(count*BATCHSIZE))
     hf.close()
 
     print("writing file completed")
