@@ -90,27 +90,27 @@ def generate_em_posvel(nsample):
 
     for i in range(0,nsample):
         f1 = rng.random() * 2 * np.pi
-        #f2 = rng.random() * 2 * np.pi
+        f2 = rng.random() * 2 * np.pi
         #f2 = np.random.random_sample()*2*np.pi
         sim.add(m=1.0)
         sim.add(primary=sim.particles[0],m=me,a=1,e=0.0167,f=f1)
-        #sim.add(primary=sim.particles[1],m=mm,a=am,e=0.0549,f=f2)
+        sim.add(primary=sim.particles[1],m=mm,a=am,e=0.0549,f=f2)
 
 
         earth = sim.particles[1]
-        #moon = sim.particles[2]
+        moon = sim.particles[2]
 
         xe.append([earth.x,earth.y,earth.z])
         vxe.append([earth.vx,earth.vy,earth.vz])
 
-        #xm.append([moon.x,moon.y,moon.z])
-        #vxm.append([moon.vx,moon.vy,moon.vz])
+        xm.append([moon.x,moon.y,moon.z])
+        vxm.append([moon.vx,moon.vy,moon.vz])
 
         del sim.particles
 
     sim = None
 
-    return xe,vxe#,vxe,vxm
+    return xe,xm,vxe,vxm
 
 def velocity_at_peri(xe,xc,v_inf,G,me):
     #vfinal = np.zeros(BATCHSIZE)
@@ -192,7 +192,7 @@ def get_impact_parameter(rp,xe,vxe,xyz,vel):
     return b
 
 
-def generate_unbound_orbits(BATCHSIZE,v_inf,G,xe,vxe):
+def generate_unbound_orbits(BATCHSIZE,v_inf,G,xe,vxe,xm,vxm):
     rng = np.random.default_rng()
     Re = 6378.1 * u.km
     Re = Re.to(u.AU).value
@@ -200,7 +200,7 @@ def generate_unbound_orbits(BATCHSIZE,v_inf,G,xe,vxe):
     me = me.to(u.Msun).value
     mm = 7.34767309e22 * u.kg
     mm = mm.to(u.Msun).value
-
+    mb = me+mm
     am = 384748 * u.km
     am = am.to(u.AU).value
 
@@ -217,7 +217,29 @@ def generate_unbound_orbits(BATCHSIZE,v_inf,G,xe,vxe):
     rp_all = []
     b_all = []
     while count_unbound < BATCHSIZE:
-        rp = rng.random() * (am-Re) + Re
+        xb = (me*xe[i][0] + mm*xm[i][0]) / mb
+        yb = (me*xe[i][1] + mm*xm[i][1]) / mb
+        zb = (me*xe[i][2] + mm*xm[i][2]) / mb
+        
+        vxb = (me*vxe[i][0] + mm*vxm[i][0]) / mb
+        vyb = (me*vxe[i][1] + mm*vxm[i][1]) / mb
+        vzb = (me*vxe[i][2] + mm*vxm[i][2]) / mb
+        
+        xbi = np.array([xb,yb,zb])
+        vxbi = np.array([vxb,vyb,vzb])
+        xei = np.array(xe[i])
+        xmi = np.array(xm[i])
+        vxei = np.array(vxe[i])
+        vxmi = np.array(vxm[i])
+        rpos_e = xei-xbi
+        rpos_m = xmi-xbi
+        rvel_e = vxei-vxbi
+        rvel_m = vxmi-vxbi
+        dpos_e = np.sqrt(np.sum(rpos_e**2,axis=0))
+        dpos_m = np.sqrt(np.sum(rpos_m**2,axis=0))
+        am_mod = dpos_m
+        Re_mod = Re-dpos_e
+        rp = rng.random() * (am_mod-Re_mod) + Re_mod
         phi = (2*np.pi)*rng.random()
         theta = (np.pi)*rng.random()
 
@@ -227,18 +249,20 @@ def generate_unbound_orbits(BATCHSIZE,v_inf,G,xe,vxe):
         xyz = np.array([x,y,z])
         vperi = velocity_at_peri(xe[i],xyz,v_inf,G,me)
         vel_part=get_velocity(vperi,x,y,z)
+        
+        
+        xyz[0]+=xbi[0]
+        xyz[1]+=xbi[1]
+        xyz[2]+=xbi[2]
 
-        xyz[0]+=xe[i][0]
-        xyz[1]+=xe[i][1]
-        xyz[2]+=xe[i][2]
-
-        vel_part[0]+=vxe[i][0]
-        vel_part[1]+=vxe[i][1]
-        vel_part[2]+=vxe[i][2]
+        vel_part[0]+=vxbi[0]
+        vel_part[1]+=vxbi[1]
+        vel_part[2]+=vxbi[2]
         xsi = np.array([0.0,0.0,0.0])
-        xmi = np.array([0.0,0.0,0.0])
-        xei = np.array(xe[i])
-        ene=get_energy(G,me,0.0,xsi,xei,xmi,xyz,vel_part)
+        #xmi = np.array([0.0,0.0,0.0])
+        
+        
+        ene=get_energy(G,mb,0.0,xsi,xbi,xmi,xyz,vel_part)
         if(ene > 0):
             #xyz_all.append(xyz)
             #vel_all.append(vel_part)
@@ -247,25 +271,39 @@ def generate_unbound_orbits(BATCHSIZE,v_inf,G,xe,vxe):
             simi = rebound.Simulation()
             simi.units = ('yr', 'AU', 'Msun')
             simi.add(m=1.0)
-            simi.add(m=me, x=xei[0],y=xei[1],z=xei[2],vx=vxe[i][0],vy=vxe[i][1],vz=vxe[i][2])
+            simi.add(m=me, x=xbi[0],y=xbi[1],z=xbi[2],vx=vxbi[0],vy=vxbi[1],vz=vxbi[2])
+            #simi.add(m=mm, x=xmi[0],y=xmi[1],z=xmi[2],vx=vxmi[0],vy=vxmi[1],vz=vxmi[2])
             simi.add(m=0.0,x=xyz[0],y=xyz[1],z=xyz[2],vx=vel_part[0],vy=vel_part[1],vz=vel_part[2])
             simi.move_to_com()
             simi.integrate(-2) #### IMPORTANT LINE!! HARDCODED ####
             sun = simi.particles[0]
-            earth = simi.particles[1]
-            comet = simi.particles[2]
+            #earth = simi.particles[1]
+            #moon = simi.particles[2]
+            #comet = simi.particles[3]
+            bary = simi.particles[1]
+            comet=simi.particles[2]
+            xbii = np.array([bary.x,bary.y,bary.z])
+            xeii = np.array([bary.x+rpos_e[0],bary.y+rpos_e[1],bary.z+rpos_e[2]])
+            xmii = np.array([bary.x+rpos_m[0],bary.y+rpos_m[1],bary.z+rpos_m[2]])
+            veii = np.array([bary.vx+rvel_e[0],bary.vy+rvel_e[1],bary.vz+rvel_e[2]])
+            vmii = np.array([bary.vx+rvel_m[0],bary.vy+rvel_m[1],bary.vz+rvel_m[2]])
+            
             xsii = np.array([sun.x,sun.y,sun.z])
-            xeii = np.array([earth.x,earth.y,earth.z])
+            #xeii = np.array([earth.x,earth.y,earth.z])
+            #xmii = np.array([moon.x,moon.y,moon.z])
             xcii = np.array([comet.x,comet.y,comet.z])
             vsii = np.array([sun.vx,sun.vy,sun.vz])
-            veii = np.array([earth.vx,earth.vy,earth.vz])
+            #veii = np.array([earth.vx,earth.vy,earth.vz])
+            #vmii = np.array([moon.vx,moon.vy,moon.vz])
             vcii = np.array([comet.vx,comet.vy,comet.vz])
-            enei = get_energy(G,me,0.0,xsii,xeii,xmi,xcii,vcii)
+            enei = get_energy(G,me,mm,xsii,xeii,xmii,xcii,vcii)
             if(enei > 0):
-                simi.add(primary=simi.particles[1],m=mm,a=am,e=0.0549,f=rng.random() * 2 * np.pi)
-                moon = simi.particles[3]
-                xm_all.append(np.array([moon.x,moon.y,moon.z]))
-                vxm_all.append(np.array([moon.vx,moon.vy,moon.vz]))
+                #simi.add(primary=simi.particles[1],m=mm,a=am,e=0.0549,f=rng.random() * 2 * np.pi)
+                #moon = simi.particles[3]
+                #xm_all.append(np.array([moon.x,moon.y,moon.z]))
+                #vxm_all.append(np.array([moon.vx,moon.vy,moon.vz]))
+                xm_all.append(xmii)
+                vxm_all.append(vmii)
                 xs_all.append(xsii)
                 xe_all.append(xeii)
                 vxs_all.append(vsii)
@@ -391,7 +429,8 @@ def run_scattering_experiment(args):
     v_a = args[0]
     BATCHSIZE=int(args[1])
 
-    xe,vxe = generate_em_posvel(BATCHSIZE)
+    xe,xm,vxe,vxm = generate_em_posvel(BATCHSIZE)
+
 
     sim = rebound.Simulation()
     sim.units = ('yr', 'AU', 'Msun')
@@ -415,7 +454,7 @@ def run_scattering_experiment(args):
     #now run the simulation in two steps
     #1. run it backwards in time
     #2. if it is unbound, get a new random position for the moon
-    xs_all, xe_all, xm_all, xyz_all, vxs_all, vxe_all, vxm_all, vel_all, rp_all, b_all = generate_unbound_orbits(BATCHSIZE,v_asym_auyr,sim.G,xe,vxe)
+    xs_all, xe_all, xm_all, xyz_all, vxs_all, vxe_all, vxm_all, vel_all, rp_all, b_all = generate_unbound_orbits(BATCHSIZE,v_asym_auyr,sim.G,xe,vxe,xm,vxm)
     #3. run it forward
     rp_debug = []
     res_batch = []
@@ -436,23 +475,27 @@ def run_scattering_experiment(args):
 #         del sim.particles
 #         xc = [cp[0],cp[1],cp[2]]
 #         vxc = [cp[3],cp[4],cp[5]]
-        t_end_s = 5 #### IMPORTANT!!! CHANGE IT ####
+        t_end_s = 2 #### IMPORTANT!!! CHANGE IT ####
         res_s = run_forward_kepler(xs_all[i],xe_all[i],xm_all[i],xyz_all[i],vxs_all[i],vxe_all[i],vxm_all[i],vel_all[i],t_end_s)
+        qi = rp_all[i]
         debug_e = np.array(res_s[1])
         debug_c = np.array(res_s[3])
         debug_d = np.sqrt(np.sum((debug_c-debug_e)**2,axis=0))
         rp_debug.append(debug_d)
         if(res_s[-1]>0):
             #xs,xe,xm,xc,vxs,vxe,vxm,vxc,initial_b,initial_rp,collb_flag
-            res_batch.append([res_s[0],res_s[1],res_s[2],res_s[3],res_s[4],res_s[5],res_s[6],res_s[7],b[i],qi,res_s[-1]])
+            res_batch.append([res_s[0],res_s[1],res_s[2],res_s[3],res_s[4],res_s[5],res_s[6],res_s[7],b_all[i],qi,res_s[-1]])
     #print("finished batch!")
-    #print(np.mean((np.array(rp_debug)-rp_all)/rp_all))
+    print(rp_all/am)
+    print(rp_debug/am)
+    print(rp_all/am - rp_debug/am)
+    #print(((np.array(rp_debug)-rp_all)/rp_all))
     return res_batch
     #print((np.array(rp_debug)-np.array(rp_debug2))/np.array(rp_debug))
     #print(rp_debug)
 if __name__ == "__main__":
     #multiprocessing.set_start_method('forkserver')
-    BATCHSIZE = 1000
+    BATCHSIZE = 100
     v_a = 1.0
     args = (v_a,BATCHSIZE)
     res = run_scattering_experiment(args)
