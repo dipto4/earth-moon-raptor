@@ -112,19 +112,19 @@ def generate_em_posvel(nsample):
 
     return xe,xm,vxe,vxm
 
-def velocity_at_peri(xe,xc,v_inf,G,me):
+def velocity_at_peri(xe,xm,xc,v_inf,G,me,mm):
     #vfinal = np.zeros(BATCHSIZE)
     #for i in range(0,BATCHSIZE):
     e_inf = 0.5*v_inf**2
     xei = np.array(xe)
-    #xmi = np.array(xm[i])
+    xmi = np.array(xm)
     xci = xei + xc #comet distance is w.r.t. earth
     ds = np.sqrt(np.sum(xci**2,axis=0))
     de = np.sqrt(np.sum((xci-xei)**2,axis=0))
-    #dm = np.sqrt(np.sum((xc[i]-xmi)**2,axis=0))
+    dm = np.sqrt(np.sum((xci-xmi)**2,axis=0))
     e_s = -G / ds
     e_e = -G * me / de
-    #e_m = -G * mm / dm
+    e_m = -G * mm / dm
     #rsun = r + rb
     #dsun = np.sqrt(rsun[0]**2 + rsun[1]**2 + rsun[2]**2)
     #e_sun = -G / dsun
@@ -135,9 +135,9 @@ def velocity_at_peri(xe,xc,v_inf,G,me):
 def get_energy(G,me,mm,xsi,xei,xmi,xci,vci):
     v2 = np.sum(vci**2, axis=0)
     ds = np.sqrt(np.sum((xsi-xci)**2,axis=0))
-    de = np.sqrt(np.sum((xsi-xci)**2,axis=0))
-    dm = np.sqrt(np.sum((xsi-xci)**2,axis=0))
-    ene = 0.5*v2 - G*(1.0/ds - me/de - mm / dm)
+    de = np.sqrt(np.sum((xei-xci)**2,axis=0))
+    dm = np.sqrt(np.sum((xmi-xci)**2,axis=0))
+    ene = 0.5*v2 - G*(1.0/ds + me/de + mm / dm)
     return ene
 
 
@@ -247,7 +247,8 @@ def generate_unbound_orbits(BATCHSIZE,v_inf,G,xe,vxe,xm,vxm):
         y = rp * np.sin(phi) * np.sin(theta)
         z = rp * np.cos(theta)
         xyz = np.array([x,y,z])
-        vperi = velocity_at_peri(xe[i],xyz,v_inf,G,me)
+        vperi = velocity_at_peri(xe[i],xmi,xyz,v_inf,G,me,mm)
+        #print(vperi)
         vel_part=get_velocity(vperi,x,y,z)
         
         
@@ -404,7 +405,7 @@ def run_forward_kepler(xs,xe,xm,xc,vxs,vxe,vxm,vxc,t_end):
 #         #print(orbit.a)
 #         print('-------------------')
     #DEBUG END
-
+    
     xsi = np.array([xs_c[0],xs_c[1],xs_c[2]])
     xei = np.array([xe_c[0],xe_c[1],xe_c[2]])
     xmi = np.array([xm_c[0],xm_c[1],xm_c[2]])
@@ -418,11 +419,83 @@ def run_forward_kepler(xs,xe,xm,xc,vxs,vxe,vxm,vxc,t_end):
     return (xsi,xei,xmi,xpi,vsi,vei,vmi,vpi,collb_flag.value)
     #return (isunbound,xsi,xei,xmi,xpi,vsi,vei,vmi,vpi)
 
+def dump_res_file(xs,ys,zs,vxs,vyz,vzs,xe,ye,ze,vxe,vye,vze,xm,ym,zm,vxm,vym,vzm,xc,yc,zc,vxc,vyc,vzc,b,q,collb_flag,v_a,upper_b,t_b,j):
+    hf = h5py.File('captured_bound_data_{}.h5'.format(j), 'w')
+    hf.create_dataset('xs',data=xs)
+    hf.create_dataset('ys',data=ys)
+    hf.create_dataset('zs',data=zs)
+    hf.create_dataset('vxs',data=vxs)
+    hf.create_dataset('vys',data=vys)
+    hf.create_dataset('vzs',data=vzs)
+
+
+    hf.create_dataset('xe',data=xe)
+    hf.create_dataset('ye',data=ye)
+    hf.create_dataset('ze',data=ze)
+    hf.create_dataset('xm',data=xm)
+    hf.create_dataset('ym',data=ym)
+    hf.create_dataset('zm',data=zm)
+
+    hf.create_dataset('vxe',data=vxe)
+    hf.create_dataset('vye',data=vye)
+    hf.create_dataset('vze',data=vze)
+    hf.create_dataset('vxm',data=vxm)
+    hf.create_dataset('vym',data=vym)
+    hf.create_dataset('vzm',data=vzm)
+
+    hf.create_dataset('xc',data=xc)
+    hf.create_dataset('yc',data=yc)
+    hf.create_dataset('zc',data=zc)
+    hf.create_dataset('vxc',data=vxc)
+    hf.create_dataset('vyc',data=vyc)
+    hf.create_dataset('vzc',data=vzc)
+
+    hf.create_dataset('b',data=b)
+    hf.create_dataset('q',data=q)
+    hf.create_dataset('collb_flag',data=collb_flag)
+
+    info_dset = hf.create_dataset("info",dtype="f8")
+    info_dset.attrs.create("v_asym",data=v_a)
+    info_dset.attrs.create("upper_b",data=upper_b)
+    info_dset.attrs.create("total_experiments",data=float(t_b))
+    hf.close()
+
+def dump_og_file(xs,ys,zs,vxs,vyz,vzs,xe,ye,ze,vxe,vye,vze,xm,ym,zm,vxm,vym,vzm,xc,yc,zc,vxc,vyc,vzc,j):
+    hf = h5py.File('original_bound_data_{}.h5'.format(j), 'w')
+    hf.create_dataset('oxs',data=xs)
+    hf.create_dataset('oys',data=ys)
+    hf.create_dataset('ozs',data=zs)
+    hf.create_dataset('ovxs',data=vxs)
+    hf.create_dataset('ovys',data=vys)
+    hf.create_dataset('ovzs',data=vzs)
+
+
+    hf.create_dataset('oxe',data=xe)
+    hf.create_dataset('oye',data=ye)
+    hf.create_dataset('oze',data=ze)
+    hf.create_dataset('oxm',data=xm)
+    hf.create_dataset('oym',data=ym)
+    hf.create_dataset('ozm',data=zm)
+
+    hf.create_dataset('ovxe',data=vxe)
+    hf.create_dataset('ovye',data=vye)
+    hf.create_dataset('ovze',data=vze)
+    hf.create_dataset('ovxm',data=vxm)
+    hf.create_dataset('ovym',data=vym)
+    hf.create_dataset('ovzm',data=vzm)
+
+    hf.create_dataset('oxc',data=xc)
+    hf.create_dataset('oyc',data=yc)
+    hf.create_dataset('ozc',data=zc)
+    hf.create_dataset('ovxc',data=vxc)
+    hf.create_dataset('ovyc',data=vyc)
+    hf.create_dataset('ovzc',data=vzc)
+
+    hf.close()
 
 
 
-
-#@stopit_after_timeout(20, raise_exception=True)
+@stopit_after_timeout(30, raise_exception=True)
 def run_scattering_experiment(args):
     #set BATCHSIZE to be 100
     #generate BATCHSIZE random earth-moon posvels first
@@ -458,6 +531,7 @@ def run_scattering_experiment(args):
     #3. run it forward
     rp_debug = []
     res_batch = []
+    og_batch = []
     for i in range(0,BATCHSIZE):
 #         xxb = [xb[i],yb[i],zb[i]]
 #         vvxb = [vxb[i],vyb[i],vzb[i]]
@@ -475,224 +549,276 @@ def run_scattering_experiment(args):
 #         del sim.particles
 #         xc = [cp[0],cp[1],cp[2]]
 #         vxc = [cp[3],cp[4],cp[5]]
-        t_end_s = 2 #### IMPORTANT!!! CHANGE IT ####
+        t_end_s = 5 #### IMPORTANT!!! CHANGE IT ####
         res_s = run_forward_kepler(xs_all[i],xe_all[i],xm_all[i],xyz_all[i],vxs_all[i],vxe_all[i],vxm_all[i],vel_all[i],t_end_s)
         qi = rp_all[i]
-        debug_e = np.array(res_s[1])
-        debug_c = np.array(res_s[3])
-        debug_d = np.sqrt(np.sum((debug_c-debug_e)**2,axis=0))
-        rp_debug.append(debug_d)
+        #debug_e = np.array(res_s[1])
+        #debug_c = np.array(res_s[3])
+        #debug_d = np.sqrt(np.sum((debug_c-debug_e)**2,axis=0))
+        #rp_debug.append(debug_d)
+        
         if(res_s[-1]>0):
             #xs,xe,xm,xc,vxs,vxe,vxm,vxc,initial_b,initial_rp,collb_flag
             res_batch.append([res_s[0],res_s[1],res_s[2],res_s[3],res_s[4],res_s[5],res_s[6],res_s[7],b_all[i],qi,res_s[-1]])
+            og_batch.append([xs_all[i],xe_all[i],xm_all[i],xyz_all[i],vxs_all[i],vxe_all[i],vxm_all[i],vel_all[i]])
+#         if(res_s[-1]==4):              #debugging
+#             sim3 = rebound.Simulation()
+#             sim3.units= ('yr', 'AU', 'Msun')
+#             sim3.add(m=1.0,x=res_s[0][0],y=res_s[0][1],z=res_s[0][2],vx=res_s[4][0],vy=res_s[4][1],vz=res_s[4][2])
+#             sim3.add(m=me,x=res_s[1][0],y=res_s[1][1],z=res_s[1][2],vx=res_s[5][0],vy=res_s[5][1],vz=res_s[5][2])
+#             sim3.add(m=mm,x=res_s[2][0],y=res_s[2][1],z=res_s[2][2],vx=res_s[6][0],vy=res_s[6][1],vz=res_s[6][2])
+#             sim3.add(m=0.0,x=res_s[3][0],y=res_s[3][1],z=res_s[3][2],vx=res_s[7][0],vy=res_s[7][1],vz=res_s[7][2])
+#             os = sim3.particles[3].calculate_orbit(primary=sim3.particles[0])
+#             oe = sim3.particles[3].calculate_orbit(primary=sim3.particles[1])
+#             om = sim3.particles[3].calculate_orbit(primary=sim3.particles[2])
+#             print(os.a,oe.a,om.a)
+            #print("sunpos=",res_s[0])
+            #eneiii=get_energy(1,me,mm,res_s[0],res_s[1],res_s[2],res_s[3],res_s[7]/np.sqrt(sim.G))
+            #print("python ene= {:21.16f}\n".format(eneiii))
     #print("finished batch!")
-    print(rp_all/am)
-    print(rp_debug/am)
-    print(rp_all/am - rp_debug/am)
+    #print(rp_all/am)
+    #print(rp_debug/am)
+    #print(rp_all/am - rp_debug/am)
     #print(((np.array(rp_debug)-rp_all)/rp_all))
-    return res_batch
+    return res_batch,og_batch,np.max(b_all[i])
     #print((np.array(rp_debug)-np.array(rp_debug2))/np.array(rp_debug))
     #print(rp_debug)
 if __name__ == "__main__":
     #multiprocessing.set_start_method('forkserver')
-    BATCHSIZE = 100
-    v_a = 1.0
-    args = (v_a,BATCHSIZE)
-    res = run_scattering_experiment(args)
-    print(len(res))
+    #BATCHSIZE = 10000
+    #v_a = 0.01
+    #args = (v_a,BATCHSIZE)
+    #res,og, bm = run_scattering_experiment(args)
+    #print(len(res))
     #NBATCHES = 2000
-#     BATCHSIZE,NBATCHES,v_a = get_arguments()
-#     args = (v_a, BATCHSIZE)
-#     #run_scattering_experiment(args)
-# #     nsample, v_a = get_arguments()
-#     start_time = time.time()
-#     res_data = []
-#     count = 0
-#     count_capbound = 0
+    BATCHSIZE,NBATCHES,v_a = get_arguments()
+    args = (v_a, BATCHSIZE)
+    #run_scattering_experiment(args)
+#     nsample, v_a = get_arguments()
+    start_time = time.time()
+    res_data = []
+    count = 0
+    count_capbound = 0
 
-#     print("RAPTOR v1.0. Made by Diptajyoti Mukherjee. Jan 13, 2023",flush=True)
-#     print("System: Sun-Earth-Moon",flush=True)
-#     print("BATCHSIZE: ",BATCHSIZE,flush=True)
-#     print("NBATCHES: ", NBATCHES,flush=True)
-#     print("Total experiments: ", BATCHSIZE*NBATCHES,flush=True)
-#     print("V_asym (km/s): ", v_a,flush=True)
+    print("RAPTOR-close v1.0. Made by Diptajyoti Mukherjee. Jan 17, 2023",flush=True)
+    print("System: Sun-Earth-Moon",flush=True)
+    print("BATCHSIZE: ",BATCHSIZE,flush=True)
+    print("NBATCHES: ", NBATCHES,flush=True)
+    print("Total experiments: ", BATCHSIZE*NBATCHES,flush=True)
+    print("V_asym (km/s): ", v_a,flush=True)
 
-#     sim = rebound.Simulation()
-#     sim.units = ('yr', 'AU', 'Msun')
+    sim = rebound.Simulation()
+    sim.units = ('yr', 'AU', 'Msun')
 
-#     me = 5.9724e24 * u.kg
-#     me = me.to(u.Msun).value
-#     mm = 7.34767309e22 * u.kg
-#     mm = mm.to(u.Msun).value
+    me = 5.9724e24 * u.kg
+    me = me.to(u.Msun).value
+    mm = 7.34767309e22 * u.kg
+    mm = mm.to(u.Msun).value
 
-#     v_asym = v_a #km/s
-#     v_asym_kms = v_asym * (u.km/u.s)#km/s
-#     #print(v_asym_kms)
-#     v_asym_auyr = v_asym_kms.to(u.AU/u.yr).value
-#     upper_b = np.sqrt(1 + 2 * sim.G*(me+mm+1)/(v_asym_auyr**2))
-#     print("Max b (AU): {:21.16f}".format(upper_b),flush=True)
-#     #print("generated earth, moon pos")
-#     sim = None
+    v_asym = v_a #km/s
+    v_asym_kms = v_asym * (u.km/u.s)#km/s
+    #print(v_asym_kms)
+    v_asym_auyr = v_asym_kms.to(u.AU/u.yr).value
+    #upper_b = np.sqrt(1 + 2 * sim.G*(me+mm+1)/(v_asym_auyr**2))
+    #print("Max b (AU): {:21.16f}".format(upper_b),flush=True)
+    #print("generated earth, moon pos")
+    sim = None
 
-#     UP = "\x1B[3A"
-#     CLR = "\x1B[0K"
-#     print("\n\n")
+    UP = "\x1B[3A"
+    CLR = "\x1B[0K"
+    print("\n\n")
 
-#     #for debug purposes only
-#     rrr=[]
-#     rrre=[]
+    #for debug purposes only
+    rrr=[]
+    rrre=[]
 
-#     #crude solution to take care of RAM overflows
-#     #divide the experiments into batches
-#     #currently hardcoded. fix it in the future
-#     NDIVISIONS=100
-#     DIVISION_NBATCH = int(NBATCHES/NDIVISIONS)
-#     args_rep = ((args, ) * DIVISION_NBATCH)
-#     for j in range(0,NDIVISIONS):
+    #crude solution to take care of RAM overflows
+    #divide the experiments into batches
+    #currently hardcoded. fix it in the future
+    NDIVISIONS=1
+    DIVISION_NBATCH = int(NBATCHES/NDIVISIONS)
+    args_rep = ((args, ) * DIVISION_NBATCH)
+    for j in range(0,NDIVISIONS):
 
-#         #for saving the data
-#         xs = []
-#         ys = []
-#         zs = []
-#         vxs = []
-#         vys = []
-#         vzs = []
+        #for saving the data
+        xs = []
+        ys = []
+        zs = []
+        vxs = []
+        vys = []
+        vzs = []
 
-#         xe = []
-#         ye = []
-#         ze = []
-#         vxe = []
-#         vye = []
-#         vze = []
+        xe = []
+        ye = []
+        ze = []
+        vxe = []
+        vye = []
+        vze = []
 
-#         xm = []
-#         ym = []
-#         zm = []
-#         vxm = []
-#         vym = []
-#         vzm = []
+        xm = []
+        ym = []
+        zm = []
+        vxm = []
+        vym = []
+        vzm = []
 
-#         xc = []
-#         yc = []
-#         zc = []
-#         vxc = []
-#         vyc = []
-#         vzc = []
+        xc = []
+        yc = []
+        zc = []
+        vxc = []
+        vyc = []
+        vzc = []
+        
+        oxs = []
+        oys = []
+        ozs = []
+        ovxs = []
+        ovys = []
+        ovzs = []
 
-#         q = []
-#         b = []
-#         collb_flag = []
+        oxe = []
+        oye = []
+        oze = []
+        ovxe = []
+        ovye = []
+        ovze = []
 
-#         count_division = 0
+        oxm = []
+        oym = []
+        ozm = []
+        ovxm = []
+        ovym = []
+        ovzm = []
 
-
-#         with multiprocessing.Pool() as pool:
-#             iterator = pool.imap_unordered(run_scattering_experiment, args_rep)
-
-#             while True:
-#                 try:
-#                     count+=1
-#                     count_division+=1
-#                     results = iterator.next()
-#                     count_capbound += len(results)
-#                     processed_percent = count/NBATCHES * 100
-#                     print(f"{UP}processed batch: {processed_percent}%{CLR}\ncaptured/bound: {count_capbound}{CLR}\n",flush=True)
-
-#                     if(len(results)>0):
-#                         for result in results:
-#                             xs.append(result[0][0])
-#                             ys.append(result[0][1])
-#                             zs.append(result[0][2])
-
-#                             xe.append(result[1][0])
-#                             ye.append(result[1][1])
-#                             ze.append(result[1][2])
-
-#                             xm.append(result[2][0])
-#                             ym.append(result[2][1])
-#                             zm.append(result[2][2])
-
-#                             xc.append(result[3][0])
-#                             yc.append(result[3][1])
-#                             zc.append(result[3][2])
-
-#                             vxs.append(result[4][0])
-#                             vys.append(result[4][1])
-#                             vzs.append(result[4][2])
-
-#                             vxe.append(result[5][0])
-#                             vye.append(result[5][1])
-#                             vze.append(result[5][2])
-
-#                             vxm.append(result[6][0])
-#                             vym.append(result[6][1])
-#                             vzm.append(result[6][2])
-
-#                             vxc.append(result[7][0])
-#                             vyc.append(result[7][1])
-#                             vzc.append(result[7][2])
-
-#                             b.append(result[8])
-#                             q.append(result[9])
-#                             collb_flag.append(result[10])
-
-#                     #print(len(result))
-#                     #rrr.append(result)
-
-#                 except StopIteration:
-#                     break
-#                 except Exception as e:
-#                     # do something
-#                     rrre.append(e)
-#             pool.terminate()
-
-#         count-=1
-#         count_division-=1
-#         #print("\n\n")
-#         #print(rrre)
-#         #print("writing to file...")
-
-#         hf = h5py.File('captured_bound_data_{}.h5'.format(j), 'w')
-#         hf.create_dataset('xs',data=xs)
-#         hf.create_dataset('ys',data=ys)
-#         hf.create_dataset('zs',data=zs)
-#         hf.create_dataset('vxs',data=vxs)
-#         hf.create_dataset('vys',data=vys)
-#         hf.create_dataset('vzs',data=vzs)
+        oxc = []
+        oyc = []
+        ozc = []
+        ovxc = []
+        ovyc = []
+        ovzc = []
 
 
-#         hf.create_dataset('xe',data=xe)
-#         hf.create_dataset('ye',data=ye)
-#         hf.create_dataset('ze',data=ze)
-#         hf.create_dataset('xm',data=xm)
-#         hf.create_dataset('ym',data=ym)
-#         hf.create_dataset('zm',data=zm)
+        q = []
+        b = []
+        collb_flag = []
+        b_max = []
+        count_division = 0
 
-#         hf.create_dataset('vxe',data=vxe)
-#         hf.create_dataset('vye',data=vye)
-#         hf.create_dataset('vze',data=vze)
-#         hf.create_dataset('vxm',data=vxm)
-#         hf.create_dataset('vym',data=vym)
-#         hf.create_dataset('vzm',data=vzm)
 
-#         hf.create_dataset('xc',data=xc)
-#         hf.create_dataset('yc',data=yc)
-#         hf.create_dataset('zc',data=zc)
-#         hf.create_dataset('vxc',data=vxc)
-#         hf.create_dataset('vyc',data=vyc)
-#         hf.create_dataset('vzc',data=vzc)
+        with multiprocessing.Pool() as pool:
+            iterator = pool.imap_unordered(run_scattering_experiment, args_rep)
 
-#         hf.create_dataset('b',data=b)
-#         hf.create_dataset('q',data=q)
-#         hf.create_dataset('collb_flag',data=collb_flag)
+            while True:
+                try:
+                    count+=1
+                    count_division+=1
+                    results, og_results, bmaxi = iterator.next()
+                    b_max.append(bmaxi)
+                    count_capbound += len(results)
+                    processed_percent = count/NBATCHES * 100
+                    print(f"{UP}processed batch: {processed_percent}%{CLR}\ncaptured/bound: {count_capbound}{CLR}\n",flush=True)
 
-#         info_dset = hf.create_dataset("info",dtype="f8")
-#         info_dset.attrs.create("v_asym",data=v_a)
-#         info_dset.attrs.create("upper_b",data=upper_b)
-#         info_dset.attrs.create("total_experiments",data=float(count_division*BATCHSIZE))
-#         hf.close()
-#     print("\n\n")
-#     print(rrre)
-#     print("total time taken: ",time.time()-start_time)
+                    if(len(results)>0):
+                        for result in results:
+                            xs.append(result[0][0])
+                            ys.append(result[0][1])
+                            zs.append(result[0][2])
 
-#     print("writing file completed")
+                            xe.append(result[1][0])
+                            ye.append(result[1][1])
+                            ze.append(result[1][2])
+
+                            xm.append(result[2][0])
+                            ym.append(result[2][1])
+                            zm.append(result[2][2])
+
+                            xc.append(result[3][0])
+                            yc.append(result[3][1])
+                            zc.append(result[3][2])
+
+                            vxs.append(result[4][0])
+                            vys.append(result[4][1])
+                            vzs.append(result[4][2])
+
+                            vxe.append(result[5][0])
+                            vye.append(result[5][1])
+                            vze.append(result[5][2])
+
+                            vxm.append(result[6][0])
+                            vym.append(result[6][1])
+                            vzm.append(result[6][2])
+
+                            vxc.append(result[7][0])
+                            vyc.append(result[7][1])
+                            vzc.append(result[7][2])
+
+                            b.append(result[8])
+                            q.append(result[9])
+                            collb_flag.append(result[10])
+                            
+                        for result in og_results:
+                            oxs.append(result[0][0])
+                            oys.append(result[0][1])
+                            ozs.append(result[0][2])
+
+                            oxe.append(result[1][0])
+                            oye.append(result[1][1])
+                            oze.append(result[1][2])
+
+                            oxm.append(result[2][0])
+                            oym.append(result[2][1])
+                            ozm.append(result[2][2])
+
+                            oxc.append(result[3][0])
+                            oyc.append(result[3][1])
+                            ozc.append(result[3][2])
+
+                            ovxs.append(result[4][0])
+                            ovys.append(result[4][1])
+                            ovzs.append(result[4][2])
+
+                            ovxe.append(result[5][0])
+                            ovye.append(result[5][1])
+                            ovze.append(result[5][2])
+
+                            ovxm.append(result[6][0])
+                            ovym.append(result[6][1])
+                            ovzm.append(result[6][2])
+
+                            ovxc.append(result[7][0])
+                            ovyc.append(result[7][1])
+                            ovzc.append(result[7][2])
+
+                    #print(len(result))
+                    #rrr.append(result)
+
+                except StopIteration:
+                    break
+                except Exception as e:
+                    # do something
+                    rrre.append(e)
+            pool.terminate()
+
+        count-=1
+        count_division-=1
+        #print("\n\n")
+        #print(rrre)
+        #print("writing to file...")
+        upper_b = np.max(b_max)
+        t_b = count_division*BATCHSIZE
+        dump_res_file(xs,ys,zs,vxs,vys,vzs,
+                      xe,ye,ze,vxe,vye,vze,
+                      xm,ym,zm,vxm,vym,vzm,
+                      xc,yc,zc,vxc,vyc,vzc,
+                      b,q,collb_flag,
+                      v_a,upper_b,t_b,j)
+        dump_og_file(oxs,oys,ozs,ovxs,ovys,ovzs,
+                     oxe,oye,oze,ovxe,ovye,ovze,
+                     oxm,oym,ozm,ovxm,ovym,ovzm,
+                     oxc,oyc,ozc,ovxc,ovyc,ovzc,j)
+
+    print("\n\n")
+    print("failed batches: ",len(rrre))
+    print("total time taken: ",time.time()-start_time)
+
+    print("writing file completed")
