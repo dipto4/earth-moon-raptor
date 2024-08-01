@@ -1,0 +1,1 @@
+Source code to run rapid planetary integration simulations utilizing 4th order Hemite P(EC)^3 scheme + kepler solver. See https://academic.oup.com/mnras/article/525/1/908/7233732?login=false for more details
